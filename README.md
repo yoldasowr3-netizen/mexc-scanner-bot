@@ -1,0 +1,1 @@
+# mexc-scanner-bot
