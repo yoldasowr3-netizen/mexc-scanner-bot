@@ -1,0 +1,6 @@
+python-telegram-bot
+ccxt
+mplfinance
+pandas
+matplotlib
+urllib3
