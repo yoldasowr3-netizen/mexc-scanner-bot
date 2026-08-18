@@ -45,7 +45,7 @@ def create_chart(symbol, chart_exchanges):
                     ohlcv_4h = chart_exchanges[ex_name].fetch_ohlcv(symbol, timeframe='4h', limit=CHART_CANDLES)
                     if ohlcv_1h and ohlcv_4h and len(ohlcv_1h) >= 10 and len(ohlcv_4h) >= 10:
                         used_exchange = ex_name
-                        print(f"  📊 Данные взяты с {ex_name}")
+                        print(f"   Данные взяты с {ex_name}")
                         break
                 except:
                     ohlcv_1h = None
@@ -126,7 +126,7 @@ def scan_markets_task():
     all_coins = {}
     mexc_coins = set()
     
-    print("🔄 Загрузка рынков...")
+    print(" Загрузка рынков...")
     for name, ex in exchanges.items():
         try:
             ex.load_markets()
@@ -180,20 +180,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Бот ищет монеты с объемом > $1 млн на:\n"
         "Binance, Bybit, Bitget, BingX, MEXC.\n"
         "✅ Показывает только те, что есть на <b>MEXC SPOT</b>\n"
-        "📊 К каждой монете будет приложен график (1H + 4H)!\n\n"
+        " К каждой монете будет приложен график (1H + 4H)!\n\n"
         "Нажми кнопку ниже 👇",
         reply_markup=get_scan_keyboard(),
         parse_mode='HTML'
     )
 
-# --- КНОПКА СКАНИРОВАНИЯ ---
+# --- КНОПКА СКАНИРОВАНИЯ (ИСПРАВЛЕННАЯ) ---
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     status_msg = await query.message.reply_text(
         "⏳ <b>Сканирую биржи...</b>\n\n"
-        "Это займёт 30-60 секунд (графики 1H+4H).",
+        "Это займёт 2-3 минуты (графики 1H+4H).",
         parse_mode='HTML'
     )
     
@@ -277,12 +277,37 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 no_chart_count += 1
                 print(f"⚠️ [{i}/{total}] {coin} без графика")
             
-            # Пауза чтобы Telegram не заблокировал
-            await asyncio.sleep(0.5)
+            # 🔧 ИЗМЕНЕНО: Пауза 3 секунды вместо 0.5 (чтобы не было flood control)
+            await asyncio.sleep(3)
             
         except Exception as e:
-            failed_count += 1
-            print(f"❌ [{i}/{total}] {coin} ошибка: {e}")
+            error_msg = str(e)
+            
+            # 🔧 НОВОЕ: Обработка flood control
+            if 'Flood control' in error_msg or 'flood' in error_msg.lower():
+                print(f"⏸️ [{i}/{total}] Flood control! Ждём 60 секунд...")
+                await asyncio.sleep(60)
+                # Пробуем ещё раз
+                try:
+                    if chart_file and os.path.exists(chart_file):
+                        with open(chart_file, 'rb') as photo:
+                            await query.message.reply_photo(
+                                photo=photo,
+                                caption=caption,
+                                parse_mode='HTML'
+                            )
+                        os.remove(chart_file)
+                        sent_count += 1
+                        print(f"✅ [{i}/{total}] {coin} отправлен после ожидания")
+                    else:
+                        await query.message.reply_text(caption, parse_mode='HTML')
+                        no_chart_count += 1
+                except Exception as retry_error:
+                    failed_count += 1
+                    print(f" [{i}/{total}] {coin} повторная ошибка: {retry_error}")
+            else:
+                failed_count += 1
+                print(f"❌ [{i}/{total}] {coin} ошибка: {e}")
             continue
     
     # Итоговое сообщение
