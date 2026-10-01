@@ -12,7 +12,7 @@ import os
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- НАСТРОЙКИ ---
-TELEGRAM_BOT_TOKEN = "8969022054:AAFW624orWdf7zjc6ZzoSfjvRlP9PmZHAOE"
+TELEGRAM_BOT_TOKEN = "8617230812:AAHoTf6dN0tRTxLCIgFvFVqP73thALh4M7s"
 MIN_VOLUME = 5_000_000
 CHART_CANDLES = 50
 MIN_TOUCHES = 2
