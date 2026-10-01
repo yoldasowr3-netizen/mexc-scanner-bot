@@ -4,3 +4,4 @@ mplfinance
 pandas
 matplotlib
 urllib3
+numpy
