@@ -1,9 +1,6 @@
 python-telegram-bot
 ccxt
-pandas
-pandas_ta
 mplfinance
+pandas
 matplotlib
-numpy
-requests
 urllib3
