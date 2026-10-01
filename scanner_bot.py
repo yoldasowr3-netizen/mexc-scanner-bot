@@ -4,9 +4,10 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import urllib3
-import mplfinance as mpf
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import matplotlib.patches as patches
 import os
 import traceback
 
@@ -64,7 +65,37 @@ def find_support_resistance_levels(df, current_price, min_touches=MIN_TOUCHES, t
     unique_levels.sort(key=lambda x: x['touches'], reverse=True)
     return unique_levels[:5]
 
-# --- ГЕНЕРАЦИЯ ГРАФИКА ---
+# --- РИСОВАНИЕ СВЕЧЕЙ НА MATPLOTLIB ---
+def draw_candles(ax, df, color_up='#26a69a', color_down='#ef5350'):
+    """Рисует японские свечи на matplotlib"""
+    for i, (timestamp, row) in enumerate(df.iterrows()):
+        open_price = row['open']
+        close_price = row['close']
+        high_price = row['high']
+        low_price = row['low']
+        
+        # Фитиль (линия от low до high)
+        ax.plot([timestamp, timestamp], [low_price, high_price], 
+                color=color_up if close_price >= open_price else color_down, 
+                linewidth=0.8)
+        
+        # Тело свечи (прямоугольник)
+        body_bottom = min(open_price, close_price)
+        body_height = abs(close_price - open_price)
+        if body_height == 0:
+            body_height = high_price * 0.0001  # минимальная высота для доджи
+        
+        rect = patches.Rectangle(
+            (timestamp, body_bottom), 
+            0.0008,  # ширина свечи (в днях)
+            body_height,
+            facecolor=color_up if close_price >= open_price else color_down,
+            edgecolor=color_up if close_price >= open_price else color_down,
+            linewidth=0.5
+        )
+        ax.add_patch(rect)
+
+# --- ГЕНЕРАЦИЯ ГРАФИКА (ЧИСТЫЙ MATPLOTLIB) ---
 def create_chart(symbol, chart_exchanges):
     try:
         print(f"\n🎨 Создаю график для {symbol}...")
@@ -107,77 +138,80 @@ def create_chart(symbol, chart_exchanges):
         levels_1h = find_support_resistance_levels(df_1h, current_price)
         levels_4h = find_support_resistance_levels(df_4h, current_price)
         
-        # 🔧 НАХОДИМ ТОЧНОЕ МАКСИМАЛЬНОЕ ЧИСЛО КАСАНИЙ
         max_touches = 0
         if levels_1h:
             max_touches = max(max_touches, max(level['touches'] for level in levels_1h))
         if levels_4h:
             max_touches = max(max_touches, max(level['touches'] for level in levels_4h))
-            
+        
         print(f"  📊 Уровни: 1H={len(levels_1h)}, 4H={len(levels_4h)}, Макс. касаний: {max_touches}")
         
-        mc = mpf.make_marketcolors(up='#26a69a', down='#ef5350', edge='inherit', wick='inherit')
-        style = mpf.make_mpf_style(
-            marketcolors=mc, figcolor='#131722', facecolor='#131722',
-            gridcolor='#2a2e39', gridstyle='-', y_on_right=True
-        )
-        
-        def make_hlines_addplot(levels, df):
-            addplots = []
-            for level in levels:
-                price = level['price']
-                touches = level['touches']
-                color = 'red' if level['type'] == 'resistance' else 'lime'
-                linewidth = 2.5 if touches >= 3 else 1.5
-                
-                hline_data = pd.DataFrame({'price': [price] * len(df)}, index=df.index)
-                addplot = mpf.make_addplot(hline_data['price'], color=color, linewidth=linewidth, linestyle='-', secondary_y=False)
-                addplots.append(addplot)
-            
-            current_price_data = pd.DataFrame({'price': [current_price] * len(df)}, index=df.index)
-            addplots.append(mpf.make_addplot(current_price_data['price'], color='gold', linewidth=1.5, linestyle='--', secondary_y=False))
-            return addplots
-        
-        addplots_1h = make_hlines_addplot(levels_1h, df_1h)
-        addplots_4h = make_hlines_addplot(levels_4h, df_4h)
-        
-        fig, axes = plt.subplots(2, 1, figsize=(12, 10), sharex=False)
+        # Создаём фигуру
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), facecolor='#131722')
         fig.patch.set_facecolor('#131722')
         
-        mpf.plot(df_1h, type='candle', style=style, ax=axes[0], volume=False, addplot=addplots_1h if addplots_1h else None)
-        axes[0].set_title(f'{symbol} - 1H | Уровни S/R', color='white', fontsize=12, pad=10)
-        axes[0].set_facecolor('#131722')
-        axes[0].tick_params(colors='white')
+        # === 1H ГРАФИК ===
+        ax1.set_facecolor('#131722')
+        ax1.set_title(f'{symbol} - 1H | Уровни S/R', color='white', fontsize=13, pad=15)
+        draw_candles(ax1, df_1h)
         
-        if levels_1h:
-            legend_text = "Уровни 1H:\n"
-            for level in levels_1h[:3]:
-                level_type = "R" if level['type'] == 'resistance' else "S"
-                legend_text += f"{level_type}: {level['price']:.6f} ({level['touches']} кас.)\n"
-            axes[0].text(0.02, 0.98, legend_text, transform=axes[0].transAxes, fontsize=9, color='white',
-                        verticalalignment='top', bbox=dict(boxstyle='round', facecolor='#131722', edgecolor='white', alpha=0.8))
+        # Уровни на 1H
+        for level in levels_1h:
+            price = level['price']
+            touches = level['touches']
+            color = '#FF4444' if level['type'] == 'resistance' else '#00FF88'
+            linewidth = 2.5 if touches >= 3 else 1.5
+            ax1.axhline(y=price, color=color, linewidth=linewidth, alpha=0.85, linestyle='-')
+            ax1.text(df_1h.index[-1], price, f'  {price:.6f} ({touches} кас.)', 
+                    color=color, fontsize=9, fontweight='bold',
+                    bbox=dict(boxstyle='round', facecolor='#131722', edgecolor=color, alpha=0.9))
         
-        mpf.plot(df_4h, type='candle', style=style, ax=axes[1], volume=False, addplot=addplots_4h if addplots_4h else None)
-        axes[1].set_title(f'{symbol} - 4H | Уровни S/R', color='white', fontsize=12, pad=10)
-        axes[1].set_facecolor('#131722')
-        axes[1].tick_params(colors='white')
+        # Текущая цена
+        ax1.axhline(y=current_price, color='#FFD700', linewidth=1.5, linestyle='--', alpha=0.8)
+        ax1.text(df_1h.index[-1], current_price, f'  Цена: {current_price:.6f}', 
+                color='#FFD700', fontsize=9, fontweight='bold',
+                bbox=dict(boxstyle='round', facecolor='#131722', edgecolor='#FFD700', alpha=0.9))
         
-        if levels_4h:
-            legend_text = "Уровни 4H:\n"
-            for level in levels_4h[:3]:
-                level_type = "R" if level['type'] == 'resistance' else "S"
-                legend_text += f"{level_type}: {level['price']:.6f} ({level['touches']} кас.)\n"
-            axes[1].text(0.02, 0.98, legend_text, transform=axes[1].transAxes, fontsize=9, color='white',
-                        verticalalignment='top', bbox=dict(boxstyle='round', facecolor='#131722', edgecolor='white', alpha=0.8))
+        ax1.tick_params(colors='white', labelsize=8)
+        ax1.grid(color='#2a2e39', alpha=0.3)
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
+        plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        
+        # === 4H ГРАФИК ===
+        ax2.set_facecolor('#131722')
+        ax2.set_title(f'{symbol} - 4H | Уровни S/R', color='white', fontsize=13, pad=15)
+        draw_candles(ax2, df_4h)
+        
+        # Уровни на 4H
+        for level in levels_4h:
+            price = level['price']
+            touches = level['touches']
+            color = '#FF4444' if level['type'] == 'resistance' else '#00FF88'
+            linewidth = 2.5 if touches >= 3 else 1.5
+            ax2.axhline(y=price, color=color, linewidth=linewidth, alpha=0.85, linestyle='-')
+            ax2.text(df_4h.index[-1], price, f'  {price:.6f} ({touches} кас.)', 
+                    color=color, fontsize=9, fontweight='bold',
+                    bbox=dict(boxstyle='round', facecolor='#131722', edgecolor=color, alpha=0.9))
+        
+        # Текущая цена
+        ax2.axhline(y=current_price, color='#FFD700', linewidth=1.5, linestyle='--', alpha=0.8)
+        ax2.text(df_4h.index[-1], current_price, f'  Цена: {current_price:.6f}', 
+                color='#FFD700', fontsize=9, fontweight='bold',
+                bbox=dict(boxstyle='round', facecolor='#131722', edgecolor='#FFD700', alpha=0.9))
+        
+        ax2.tick_params(colors='white', labelsize=8)
+        ax2.grid(color='#2a2e39', alpha=0.3)
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
+        plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45, ha='right')
         
         plt.tight_layout()
         
         filename = f'chart_{symbol.replace("/", "")}.png'
-        plt.savefig(filename, dpi=100, bbox_inches='tight', facecolor='#131722')
+        plt.savefig(filename, dpi=110, bbox_inches='tight', facecolor='#131722', edgecolor='none')
         plt.close()
         
         print(f"✅ График сохранён: {filename}")
-        return filename, max_touches # 🔧 ВОЗВРАЩАЕМ ТОЧНОЕ ЧИСЛО
+        return filename, max_touches
         
     except Exception as e:
         print(f"❌ Ошибка создания графика {symbol}: {e}")
@@ -234,7 +268,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 <b>СКАНЕР MEXC SPOT С УРОВНЯМИ S/R!</b>\n\n"
         "Бот ищет монеты с объемом > $5 млн.\n"
         "✅ Только те, что есть на <b>MEXC SPOT</b>\n"
-        "📊 График (1H + 4H) с точным числом касаний!\n\n"
+        " График (1H + 4H) с точным числом касаний!\n\n"
         "Нажми кнопку ниже 👇",
         reply_markup=get_scan_keyboard(),
         parse_mode='HTML'
@@ -244,7 +278,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    status_msg = await query.message.reply_text("⏳ <b>Сканирую биржи...</b>\n\nЭто займёт 3-5 минут.", parse_mode='HTML')
+    status_msg = await query.message.reply_text(" <b>Сканирую биржи...</b>\n\nЭто займёт 3-5 минут.", parse_mode='HTML')
     
     loop = asyncio.get_event_loop()
     sorted_coins = await loop.run_in_executor(None, scan_markets_task)
@@ -267,7 +301,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif name == 'MEXC': chart_exchanges[name] = ccxt.mexc({'enableRateLimit': True, 'timeout': 30000, 'options': {'defaultType': 'spot'}})
             chart_exchanges[name].load_markets()
         except Exception as e:
-            print(f"⚠️ {name} не подключена: {e}")
+            print(f"️ {name} не подключена: {e}")
     
     sent_count = 0
     no_chart_count = 0
@@ -277,7 +311,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             symbol = f"{coin}/USDT"
             ex_str = ', '.join(ex_list)
             
-            # 🔧 ПОЛУЧАЕМ ФАЙЛ И ТОЧНОЕ ЧИСЛО КАСАНИЙ
             chart_result = create_chart(symbol, chart_exchanges)
             
             if chart_result and chart_result[0]:
@@ -288,7 +321,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"━━━━━━━━━━━━━━━\n"
                     f"🏦 <b>Биржи:</b> {ex_str}\n"
                     f"📊 <b>График:</b> 1H + 4H с уровнями S/R\n"
-                    f"📏 <b>Макс. касаний на уровне:</b> {max_touches} раз\n" # 🔧 ТОЧНАЯ ЦИФРА ЗДЕСЬ!
+                    f"📏 <b>Макс. касаний на уровне:</b> {max_touches} раз\n"
                     f"⏰ {datetime.now().strftime('%H:%M:%S')}"
                 )
                 
@@ -298,7 +331,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sent_count += 1
                 print(f"✅ [{i}/{total}] {coin} отправлен (касаний: {max_touches})")
             else:
-                await query.message.reply_text(f"<b>{i}) {coin}USDT</b>\n⚠️ <i>График не удалось построить</i>", parse_mode='HTML')
+                await query.message.reply_text(f"<b>{i}) {coin}USDT</b>\n️ <i>График не удалось построить</i>", parse_mode='HTML')
                 no_chart_count += 1
             
             await asyncio.sleep(3)
@@ -312,7 +345,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ <b>СКАНИРОВАНИЕ ЗАВЕРШЕНО!</b>\n\n"
         f"📊 <b>Всего:</b> {total} монет\n"
         f"✅ <b>С графиками:</b> {sent_count}\n"
-        f"⚠️ <b>Без графиков:</b> {no_chart_count}\n"
+        f"️ <b>Без графиков:</b> {no_chart_count}\n"
         f"💰 <b>Фильтр:</b> объем > $5,000,000\n"
         f"⏰ <b>Время:</b> {datetime.now().strftime('%H:%M:%S')}\n"
         f"━━━━━━━━━━━━━━━━━━━━"
